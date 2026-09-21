@@ -1,0 +1,11 @@
+[project]
+name = "agentic-ai-tutorial"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+# utils.py 가 import 시점에 사용하는 최소 base 의존성.
+# (각 노트북은 추가 패키지를 런타임에 utils.uv_install() 로 설치)
+dependencies = [
+    "python-dotenv>=1.0",
+]
