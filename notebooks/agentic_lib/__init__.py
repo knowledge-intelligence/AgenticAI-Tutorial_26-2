@@ -25,7 +25,7 @@ agentic_lib — Agentic AI Tutorial 공통 라이브러리
     sys.path.insert(0, os.path.abspath(''))      # notebooks/ 를 import 경로에 추가
     from agentic_lib import bootstrap, tools, memory, planning
 
-    llm = bootstrap.setup()                       # .env 재로드 + 기본 LLM(ollama/qwen3:8b) 반환
+    llm = bootstrap.setup()                       # .env 재로드 + 기본 LLM(nvidia/deepseek-v4.1-flash) 반환
     text = bootstrap.invoke_text(llm, "안녕?")    # 응답을 항상 깔끔한 문자열로
 """
 

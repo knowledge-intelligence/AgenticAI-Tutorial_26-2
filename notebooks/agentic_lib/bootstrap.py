@@ -7,11 +7,11 @@ bootstrap — 노트북 공통 셋업 & LLM 응답 정규화
 
 왜 필요한가?
     - LangChain 의 `response.content` 는 공급자마다 형식이 다르다.
-        * Google(Gemini)  : list[dict]  예) [{'type':'text','text':'...', 'extras': {...}}]
-        * Ollama(qwen3:8b): str          예) "<think> ... </think>\\n실제 답변"
+        * Google(Gemini)   : list[dict]  예) [{'type':'text','text':'...', 'extras': {...}}]
+        * NVIDIA/OpenRouter: str         예) "실제 답변" (사고 모델은 "<think> ... </think>\\n실제 답변")
         * Anthropic        : list[dict]  예) [{'type':'text','text':'...'}]
       그대로 print 하면 `[{'type':'text', ...}]` 또는 `[]` 처럼 지저분하게 나온다.
-    - qwen3 같은 '사고(thinking) 모델' 은 답변 앞에 <think>...</think> 추론 과정을 붙인다.
+    - 일부 '사고(thinking) 모델' 은 답변 앞에 <think>...</think> 추론 과정을 붙인다.
       교육용 출력에서는 이 부분을 떼고 최종 답변만 보여주는 편이 깔끔하다.
 
 → `to_text()` 하나로 어떤 공급자든 동일하게 처리한다.
@@ -35,7 +35,7 @@ _THINK_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
 
 
 def strip_think(text: str) -> str:
-    """qwen3 등 사고 모델의 <think>...</think> 추론 블록을 제거한다.
+    """사고(thinking) 모델의 <think>...</think> 추론 블록을 제거한다.
 
     Args:
         text: 원본 텍스트.
@@ -49,7 +49,7 @@ def strip_think(text: str) -> str:
 def to_text(content, strip_thinking: bool = True, strip: bool = True) -> str:
     """LangChain 메시지의 content 를 공급자와 무관하게 '평범한 문자열'로 정규화한다.
 
-    Google/Anthropic 의 list[dict] 형식, Ollama 의 str 형식, dict 단일 형식을 모두 처리한다.
+    Google/Anthropic 의 list[dict] 형식, NVIDIA/OpenRouter 의 str 형식, dict 단일 형식을 모두 처리한다.
 
     Args:
         content: `response.content` (str | list | dict | None).
@@ -110,7 +110,7 @@ def setup(provider: str = None, temperature: float = 0, verbose: bool = True):
     각 노트북 첫 셀의 반복 코드(reload_env → get_llm)를 한 줄로 줄인다.
 
     Args:
-        provider: 사용할 LLM 공급자. None 이면 .env 의 LLM_PROVIDER(기본 'ollama').
+        provider: 사용할 LLM 공급자. None 이면 .env 의 LLM_PROVIDER(기본 'nvidia').
         temperature: 생성 온도(0 = 결정론적).
         verbose: True 면 현재 공급자/모델 상태를 출력한다.
 
@@ -129,18 +129,20 @@ def setup(provider: str = None, temperature: float = 0, verbose: bool = True):
 # 도구 호출(function calling) 공급자 차이 흡수
 # =============================================================================
 #
-# 일부 서버는 '한 응답에 도구를 하나만' 호출할 수 있다. 대표적으로 NVIDIA build 의
-# `meta/llama-3.1-8b-instruct` 는 대화 이력(assistant 메시지)에 tool_calls 가 2개 이상
-# 들어가면 프롬프트 템플릿 적용이 실패해 다음과 같은 500 오류를 낸다.
+# 일부 모델은 '한 응답에 도구를 하나만' 호출할 수 있다. 예를 들어 NVIDIA build 에서 예전에
+# 쓰던 `meta/llama-3.1-8b-instruct`(2026-07 서비스 종료)는 대화 이력(assistant 메시지)에
+# tool_calls 가 2개 이상 들어가면 프롬프트 템플릿 적용이 실패해 다음과 같은 500 오류를 냈다.
 #
 #   Exception: [500] Failed to apply prompt template:
 #     invalid operation: This model only supports single tool-calls at once!
 #
-# 반면 Ollama(qwen3:8b)·Google(Gemini) 등은 한 응답에서 여러 도구를 병렬 호출해도 된다.
-# 아래 헬퍼들은 이 차이를 흡수해, 단일 도구 서버에서는 '순차(단일) 도구 호출'로 동작하도록 한다.
+# 현재 기본 모델들(NVIDIA `deepseek-ai/deepseek-v4.1-flash`, OpenRouter `openrouter/free`)은
+# 한 응답에서 여러 도구를 병렬 호출해도 된다. 아래 헬퍼들은 단일 도구 모델로 바꿨을 때를 대비해,
+# 해당 공급자에서는 '순차(단일) 도구 호출'로 동작하도록 차이를 흡수한다.
 
 # 한 응답에 도구를 '하나만' 호출할 수 있는 공급자 집합.
-_SINGLE_TOOLCALL_PROVIDERS = {"nvidia"}
+# 단일 도구 전용 모델로 바꾸면 해당 공급자 이름(예: "nvidia")을 여기에 추가한다.
+_SINGLE_TOOLCALL_PROVIDERS = set()
 
 
 def supports_parallel_tool_calls(provider: str = None) -> bool:
@@ -159,7 +161,7 @@ def supports_parallel_tool_calls(provider: str = None) -> bool:
 def bind_tools(llm, tools, provider: str = None, **kwargs):
     """공급자 차이를 흡수하는 `bind_tools` 래퍼.
 
-    NVIDIA build 의 `llama-3.1-8b` 처럼 '한 번에 도구 하나만' 지원하는 서버에는
+    '한 번에 도구 하나만' 지원하는 공급자(_SINGLE_TOOLCALL_PROVIDERS)에는
     parallel_tool_calls=False 를 넘겨 애초에 다중 tool_calls 가 나오지 않도록 유도한다
     (파라미터를 받지 않는 공급자/버전은 자동으로 일반 bind_tools 로 폴백).
 
@@ -187,11 +189,11 @@ def bind_tools(llm, tools, provider: str = None, **kwargs):
 def cap_tool_calls(resp, provider: str = None):
     """단일 도구 호출만 지원하는 공급자면 응답의 tool_calls 를 '첫 1개'로 줄여 돌려준다.
 
-    다중 tool_calls 를 대화 이력에 남기면 NVIDIA build 등에서 500 오류가 나므로,
+    단일 도구 전용 모델은 다중 tool_calls 를 대화 이력에 남기면 500 오류가 나므로,
     첫 호출만 처리하고 나머지는 다음 턴에 모델이 다시 요청하도록 한다(순차 실행).
     잔여 additional_kwargs 없이 깔끔하게 직렬화되도록 새 AIMessage 로 감싸 돌려준다.
 
-    병렬을 지원하는 공급자(ollama/google 등)이거나 호출이 1개 이하이면 원본을 그대로 돌려준다.
+    병렬을 지원하는 공급자(nvidia/openrouter/google 등)이거나 호출이 1개 이하이면 원본을 그대로 돌려준다.
     따라서 이 함수는 도구 사용 루프에서 항상 호출해도 안전하다.
 
     Args:

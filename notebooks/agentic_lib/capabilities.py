@@ -14,7 +14,7 @@ M01_2_core_capabilities 노트북의 'Planning(계획)' 심화 실습에서 쓰�
 
 note:
     기존 `planning` 모듈(Task/TaskStatus/TaskPlanner)은 LLM 없이 동작하는 단순
-    플래너이고, 이 모듈은 **LLM 의 with_structured_output 으로 계획을 생성**하는
+    플래너이고, 이 모듈은 **LLM 의 구조화 출력(스키마를 도구로 호출)으로 계획을 생성**하는
     심화판입니다. 둘은 목적이 달라 별도로 둡니다.
 """
 
@@ -29,7 +29,7 @@ from .bootstrap import to_text
 class PlanStep(BaseModel):
     """실행 계획의 한 단계.
 
-    LLM 이 with_structured_output(ExecutionPlan) 으로 채워 넣는 스키마라서,
+    LLM 이 bind_tools([ExecutionPlan]) 도구 호출로 채워 넣는 스키마라서,
     각 필드의 description 이 LLM 에게 '무엇을 채워야 하는지' 지시하는 역할을 한다.
     """
     step_num: int = Field(description="단계 번호 (1부터)")

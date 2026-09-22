@@ -25,12 +25,19 @@ import subprocess
 import sys
 import threading
 import urllib.parse
+import warnings
 from collections import deque
 from typing import List, Optional
 
 from dotenv import load_dotenv
 
 load_dotenv(override=True)
+
+# langchain-nvidia-ai-endpoints 는 자체 모델 목록에 없는 최신 모델(예: deepseek-v4.1-flash)에
+# "type is unknown" / "not known to support tools" 경고를 낸다. 실제 호출·도구 호출은 정상 동작하므로
+# 실습 출력이 지저분해지지 않도록 이 두 경고만 숨긴다(다른 경고는 그대로 표시).
+warnings.filterwarnings("ignore", message=r".*type is unknown and inference may fail.*")
+warnings.filterwarnings("ignore", message=r".*is not known to support tools.*")
 
 # =============================================================================
 # 패키지 설치
@@ -58,53 +65,57 @@ def uv_install(packages: list):
 # =============================================================================
 #
 # LLM_PROVIDER 선택 옵션:
-#   --- 로컬 LLM 서버 (모두 OpenAI 호환 프로토콜) ---
-#   "ollama"          → Ollama 서버 (http://localhost:11434/v1) ★ 본 강의 기본값(qwen3:8b)
-#   "llamacpp"        → llama.cpp 서버 (llama-cpp-python, Windows 네이티브 / WSL 불필요)
-#   "vllm"            → vLLM 서버 (Linux/GPU 권장; Windows+Docker 는 비권장)
-#   --- 클라우드 (비교/대체용 — .env 한 줄 전환) ---
-#   "google"          → Google AI Studio (무료, Gemini) ★ 기본 비교 대상
+#   --- 클라우드 (본 강의 기본 — 로컬 서버 불필요) ---
+#   "nvidia"          → NVIDIA build (build.nvidia.com, 무료 크레딧) ★ 본 강의 기본값
+#                       (deepseek-ai/deepseek-v4.1-flash)
+#   "openrouter"      → OpenRouter (openrouter.ai, 무료 모델 라우터 openrouter/free) ★ 비교 대상
+#   "google"          → Google AI Studio (무료, Gemini)
 #   "anthropic"       → Anthropic API Key (Claude Haiku)
 #   "anthropic_oauth" → Anthropic OAuth Bearer Token
 #   "openai"          → OpenAI API (GPT-4o-mini)
+#   --- 로컬 LLM 서버 (선택 — 본 강의에서는 사용하지 않음, OpenAI 호환 프로토콜) ---
+#   "ollama"          → Ollama 서버 (http://localhost:11434/v1)
+#   "llamacpp"        → llama.cpp 서버 (llama-cpp-python)
+#   "vllm"            → vLLM 서버 (Linux/GPU 권장)
 #
-# 본 강의 기본 구성: 로컬 Ollama + qwen3:8b 를 기본 LLM 으로 사용하고,
-# Google(Gemini) 을 손쉬운 비교 대상으로 둡니다. .env 의 LLM_PROVIDER 한 줄만
-# ollama ↔ google 로 바꾸면 로컬/클라우드를 즉시 전환할 수 있습니다.
+# 본 강의 기본 구성: NVIDIA build 를 기본 LLM 으로 사용하고, OpenRouter 를 비교 대상으로 둡니다.
+# .env 의 LLM_PROVIDER 한 줄만 nvidia ↔ openrouter 로 바꾸면 공급자를 즉시 전환할 수 있습니다.
 #
 # .env 파일에 다음 변수를 설정하세요:
-#   LLM_PROVIDER=ollama
-#   OLLAMA_BASE_URL=http://localhost:11434/v1
-#   OLLAMA_MODEL=qwen3:8b
-#   GOOGLE_API_KEY=...            # google 로 전환 시 필요
-#   ANTHROPIC_API_KEY=...
-#   ANTHROPIC_OAUTH_TOKEN=...
-#   OPENAI_API_KEY=...
-#   LLAMACPP_BASE_URL=http://localhost:8000/v1
-#   LLAMACPP_MODEL=llamacpp
-#   VLLM_BASE_URL=http://localhost:8000/v1
-#   VLLM_MODEL=meta-llama/Llama-3.1-8B-Instruct
+#   LLM_PROVIDER=nvidia
+#   NVIDIA_API_KEY=nvapi-...
+#   NVIDIA_MODEL=deepseek-ai/deepseek-v4.1-flash
+#   OPENROUTER_API_KEY=sk-or-...
+#   OPENROUTER_MODEL=openrouter/free
+#   GOOGLE_API_KEY=...            # (선택) google 로 전환 시 필요
+#   ANTHROPIC_API_KEY=...         # (선택)
+#   OPENAI_API_KEY=...            # (선택)
 
-LLM_PROVIDER          = os.getenv("LLM_PROVIDER", "ollama")
+LLM_PROVIDER          = os.getenv("LLM_PROVIDER", "nvidia")
 GOOGLE_API_KEY        = os.getenv("GOOGLE_API_KEY", "")
 ANTHROPIC_API_KEY     = os.getenv("ANTHROPIC_API_KEY", "")
 ANTHROPIC_OAUTH_TOKEN = os.getenv("ANTHROPIC_OAUTH_TOKEN", "")
 OPENAI_API_KEY        = os.getenv("OPENAI_API_KEY", "")
-# 로컬 LLM 서버 (OpenAI 호환)
+# (선택) 로컬 LLM 서버 (OpenAI 호환) — 본 강의에서는 사용하지 않음
 LLAMACPP_BASE_URL     = os.getenv("LLAMACPP_BASE_URL", "http://localhost:8000/v1")
 LLAMACPP_MODEL        = os.getenv("LLAMACPP_MODEL", "llamacpp")
 OLLAMA_BASE_URL       = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
 OLLAMA_MODEL          = os.getenv("OLLAMA_MODEL", "qwen3:8b")
 VLLM_BASE_URL         = os.getenv("VLLM_BASE_URL", "http://localhost:8000/v1")
 VLLM_MODEL            = os.getenv("VLLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
-# NVIDIA build (build.nvidia.com) — 무료 크레딧, langchain-nvidia-ai-endpoints 의 ChatNVIDIA
+# NVIDIA build (build.nvidia.com) — 무료 크레딧, langchain-nvidia-ai-endpoints 의 ChatNVIDIA (본 강의 기본)
+# 기본 모델 deepseek-v4.1-flash: 빠른 응답 + 한 응답에서 여러 도구를 병렬 호출(parallel tool calls) 지원
 NVIDIA_API_KEY        = os.getenv("NVIDIA_API_KEY", "")
 NVIDIA_BASE_URL       = os.getenv("NVIDIA_BASE_URL", "")  # 비우면 ChatNVIDIA 기본 엔드포인트
-NVIDIA_MODEL          = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-8b-instruct")
+NVIDIA_MODEL          = os.getenv("NVIDIA_MODEL", "deepseek-ai/deepseek-v4.1-flash")
+# 사고(thinking) 모드: deepseek-v4.1-flash 는 기본으로 추론(reasoning)에 토큰을 먼저 쓰기 때문에, 긴 답변을
+# 요청하면 max_completion_tokens 를 추론에 다 써서 본문(content)이 빈 문자열로 온다. 그래서 기본은 끈다(false).
+NVIDIA_THINKING       = os.getenv("NVIDIA_THINKING", "false").lower() == "true"
 # OpenRouter (openrouter.ai) — 무료 모델 라우터, OpenAI 호환 프로토콜(ChatOpenAI + base_url)
 OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY", "")
 OPENROUTER_BASE_URL   = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
-# 기본은 무료 모델 자동 선택 라우터(openrouter/free). 특정 free 모델로 고정하려면 .env 에서 변경.
+# 기본은 무료 모델 자동 선택 라우터(openrouter/free). 특정 :free 모델이 과부하(503)·요청 한도(429)에
+# 걸려도 사용 가능한 다른 무료 모델로 자동 라우팅된다. 특정 free 모델로 고정하려면 .env 에서 변경.
 OPENROUTER_MODEL      = os.getenv("OPENROUTER_MODEL", "openrouter/free")
 
 
@@ -116,12 +127,12 @@ def reload_env():
     global LLM_PROVIDER, GOOGLE_API_KEY, ANTHROPIC_API_KEY, ANTHROPIC_OAUTH_TOKEN
     global VLLM_BASE_URL, VLLM_MODEL, OPENAI_API_KEY
     global LLAMACPP_BASE_URL, LLAMACPP_MODEL, OLLAMA_BASE_URL, OLLAMA_MODEL
-    global NVIDIA_API_KEY, NVIDIA_BASE_URL, NVIDIA_MODEL
+    global NVIDIA_API_KEY, NVIDIA_BASE_URL, NVIDIA_MODEL, NVIDIA_THINKING
     global OPENROUTER_API_KEY, OPENROUTER_BASE_URL, OPENROUTER_MODEL
 
     load_dotenv(override=True)
 
-    LLM_PROVIDER          = os.getenv("LLM_PROVIDER", "ollama")
+    LLM_PROVIDER          = os.getenv("LLM_PROVIDER", "nvidia")
     GOOGLE_API_KEY        = os.getenv("GOOGLE_API_KEY", "")
     ANTHROPIC_API_KEY     = os.getenv("ANTHROPIC_API_KEY", "")
     ANTHROPIC_OAUTH_TOKEN = os.getenv("ANTHROPIC_OAUTH_TOKEN", "")
@@ -134,7 +145,8 @@ def reload_env():
     VLLM_MODEL            = os.getenv("VLLM_MODEL", "meta-llama/Llama-3.1-8B-Instruct")
     NVIDIA_API_KEY        = os.getenv("NVIDIA_API_KEY", "")
     NVIDIA_BASE_URL       = os.getenv("NVIDIA_BASE_URL", "")
-    NVIDIA_MODEL          = os.getenv("NVIDIA_MODEL", "meta/llama-3.1-8b-instruct")
+    NVIDIA_MODEL          = os.getenv("NVIDIA_MODEL", "deepseek-ai/deepseek-v4.1-flash")
+    NVIDIA_THINKING       = os.getenv("NVIDIA_THINKING", "false").lower() == "true"
     OPENROUTER_API_KEY    = os.getenv("OPENROUTER_API_KEY", "")
     OPENROUTER_BASE_URL   = os.getenv("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1")
     OPENROUTER_MODEL      = os.getenv("OPENROUTER_MODEL", "openrouter/free")
@@ -254,10 +266,14 @@ def get_llm(provider: str = None, temperature: float = 0):
     elif p == "nvidia":
         # NVIDIA build (build.nvidia.com) — 무료 크레딧. langchain 커넥터 ChatNVIDIA 사용.
         from langchain_nvidia_ai_endpoints import ChatNVIDIA
+        # max_tokens 는 ChatNVIDIA 에서 deprecated → max_completion_tokens 사용
         kwargs = dict(model=NVIDIA_MODEL, api_key=NVIDIA_API_KEY,
-                      temperature=temperature, max_tokens=1024)
+                      temperature=temperature, max_completion_tokens=1024)
         if NVIDIA_BASE_URL:                    # 지정 시에만 엔드포인트 오버라이드
             kwargs["base_url"] = NVIDIA_BASE_URL
+        if not NVIDIA_THINKING:
+            # 사고 모드 끄기(chat template 옵션). 추론 토큰 없이 바로 답해 빈 응답·지연을 막는다.
+            kwargs["model_kwargs"] = {"chat_template_kwargs": {"thinking": False}}
         return ChatNVIDIA(**kwargs)
     elif p == "openrouter":
         # OpenRouter (openrouter.ai) — OpenAI 호환 엔드포인트. 기본 모델은 무료 라우터(openrouter/free).

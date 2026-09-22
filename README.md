@@ -1,8 +1,10 @@
-# Agentic AI 실습 (26-1) — M01 ~ M02
+# Agentic AI 실습 (26-2) — M01 ~ M02
 
 Agentic AI 강의 **M01 ~ M02** 실습용 노트북과 공통 코드, uv 환경 설정을 담은 폴더입니다.
 
 - 실행 환경: **Windows 11 + CMD** · Python **3.11**(`uv` 관리)
+- LLM: 무료 클라우드 API 두 가지를 사용합니다. 기본은 **NVIDIA build**(`deepseek-ai/deepseek-v4.1-flash`),
+  비교 대상은 **OpenRouter**(`openrouter/free`)입니다. 로컬 GPU나 로컬 LLM 서버는 필요 없습니다.
 - 노트북별 상세 설치·실행 방법은 [`notebooks/env_guides/`](notebooks/env_guides/README.md) 에 있습니다.
 
 ## 폴더 구성
@@ -34,7 +36,7 @@ uv run python -m ipykernel install --user --name=agentic-ai-venv --display-name 
 
 REM 4) LLM 설정 파일 만들기 (notebooks\ 에서 1회)
 copy notebooks\.env.example notebooks\.env
-REM    → notebooks\.env 를 열어 LLM_PROVIDER 와 해당 공급자 키를 입력
+REM    → notebooks\.env 를 열어 NVIDIA_API_KEY, OPENROUTER_API_KEY 를 입력
 
 REM 5) Jupyter 실행 후 커널 "Agentic AI (uv)" 선택
 uv run jupyter notebook notebooks/
@@ -42,17 +44,24 @@ uv run jupyter notebook notebooks/
 
 노트북에 필요한 추가 패키지는 실행 중 `utils.uv_install()` 로 자동 설치됩니다.
 
-## 로컬 LLM(Ollama + qwen3:8b)을 쓸 때
+## LLM API 키 발급과 `.env` 설정
 
-```bat
-winget install --id Ollama.Ollama -e
-ollama serve
-ollama pull qwen3:8b
-curl.exe http://localhost:11434/api/tags
+| 공급자 | `LLM_PROVIDER` | 키 발급 | 기본 모델 | 비고 |
+|---|---|---|---|---|
+| **NVIDIA build** (기본) | `nvidia` | [build.nvidia.com](https://build.nvidia.com) → 모델 페이지 → `Get API Key` | `deepseek-ai/deepseek-v4.1-flash` | 무료 크레딧, 빠른 응답(1~2초), 병렬 도구 호출 지원 |
+| **OpenRouter** (비교) | `openrouter` | [openrouter.ai](https://openrouter.ai) → `Keys` → `Create Key` | `openrouter/free` | 무료 모델 자동 선택 라우터, 하루 50요청(10크레딧 이상 충전 시 1,000요청) |
+
+```ini
+# notebooks\.env
+LLM_PROVIDER=nvidia
+NVIDIA_API_KEY=nvapi-...
+NVIDIA_MODEL=deepseek-ai/deepseek-v4.1-flash
+OPENROUTER_API_KEY=sk-or-...
+OPENROUTER_MODEL=openrouter/free
 ```
 
-`notebooks\.env` 에서 `LLM_PROVIDER=ollama` 로 설정합니다. 클라우드(`google`, `nvidia` 등)를 쓰려면
-`LLM_PROVIDER` 한 줄과 해당 키만 바꾸면 되고, 노트북 코드는 고치지 않아도 됩니다.
+OpenRouter 로 전환하려면 `LLM_PROVIDER=openrouter` 한 줄만 바꾸면 됩니다. `utils.get_llm()` 이 공급자 차이를
+처리하므로 노트북 코드는 고치지 않아도 됩니다. Google Gemini(`google`), Anthropic, OpenAI 는 선택 사항입니다.
 
 ## 주의
 
