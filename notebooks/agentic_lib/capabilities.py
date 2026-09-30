@@ -59,6 +59,8 @@ def execute_plan(plan: ExecutionPlan, tool_map: dict, llm) -> dict:
 
     - 의존 단계가 모두 완료(DONE)된 경우에만 실행하고, 아니면 건너뛴다(SKIPPED).
     - 단계에 도구가 지정되어 있으면 도구를, 없으면 LLM 을 호출해 처리한다.
+    - 도구 단계의 인자(수식·검색어 등)는 LLM 이 단계 설명과 이전 결과를 보고 정한다.
+      (step.action 은 자연어 설명이라 calculator 같은 도구에 그대로 넘기면 실패한다)
     - LLM 응답은 to_text() 로 정규화해 list-content/<think> 출력 문제를 없앤다.
 
     Args:
@@ -87,18 +89,32 @@ def execute_plan(plan: ExecutionPlan, tool_map: dict, llm) -> dict:
         statuses[step.step_num] = Status.RUNNING
         print(f"[실행중] Step {step.step_num}: {step.action}")
 
+        # 이전 단계 결과를 맥락으로 묶는다(도구 인자 결정 / LLM 처리 모두에 사용)
+        context_lines = [
+            f"이전 Step {d} 결과: {results[d]}"
+            for d in step.depends_on if d in results
+        ]
+        prompt = step.action
+        if context_lines:
+            prompt += "\n\n참고:\n" + "\n".join(context_lines)
+
         if step.tool and step.tool in tool_map:
-            # 도구가 지정된 단계: 도구를 직접 호출
-            raw = tool_map[step.tool].invoke(step.action)
+            # 도구가 지정된 단계: 해당 도구 하나만 바인딩해 LLM 이 인자를 채우게 한 뒤 실행
+            tool = tool_map[step.tool]
+            resp = llm.bind_tools([tool]).invoke([HumanMessage(content=(
+                f"다음 작업을 수행하기 위해 `{tool.name}` 도구를 한 번 호출하세요. "
+                f"도구 설명에 맞는 형식의 인자를 채우세요.\n\n작업: {prompt}"
+            ))])
+            calls = [tc for tc in (resp.tool_calls or []) if tc["name"] == tool.name]
+            if calls:
+                args = calls[0]["args"]
+                print(f"  → {tool.name}({args})")
+                raw = tool.invoke(args)
+            else:
+                # 모델이 도구를 부르지 않은 경우: 단계 설명을 그대로 입력으로 폴백
+                raw = tool.invoke(step.action)
         else:
             # 도구가 없는 단계: 이전 단계 결과를 맥락으로 묶어 LLM 으로 처리
-            context_lines = [
-                f"이전 Step {d} 결과: {results[d]}"
-                for d in step.depends_on if d in results
-            ]
-            prompt = step.action
-            if context_lines:
-                prompt += "\n\n참고:\n" + "\n".join(context_lines)
             raw = to_text(llm.invoke([HumanMessage(content=prompt)]).content)
 
         results[step.step_num] = raw
